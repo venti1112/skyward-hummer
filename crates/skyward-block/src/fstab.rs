@@ -4,8 +4,9 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
-/// Where the phone's own partitions keep the table.
-pub const FILES: [&str; 2] = ["/vendor/etc/fstab.qcom", "/odm/etc/fstab.qcom"];
+/// Where the phone's own partitions keep the table. Qualcomm's newer
+/// builds name it fstab.default rather than after the hardware.
+pub const FILES: [&str; 4] = ["/vendor/etc/fstab.qcom", "/odm/etc/fstab.qcom", "/vendor/etc/fstab.default", "/odm/etc/fstab.default"];
 
 /// One filesystem the phone knows about.
 #[derive(Debug, Clone, PartialEq, Eq)]
