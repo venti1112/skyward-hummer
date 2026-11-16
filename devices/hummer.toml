@@ -1,0 +1,96 @@
+[device]
+codename = "hummer"
+brand = "OnePlus"
+model = "OnePlus Ace 5 Pro"
+ab = true
+soc = { hans = "骁龙®8至尊版移动平台", hant = "Snapdragon® 8 Elite 行動平台", en = "Snapdragon® 8 Elite Mobile Platform" }
+# The system installed is crDroid, whose own version is the one the phone
+# shows: the AOSP display id is only the build's number.
+os_version_prop = "ro.crdroid.display.version"
+
+[display]
+# TARGET_SCREEN_DENSITY and TARGET_SCREEN_HEIGHT in the device tree's
+# BoardConfig.mk; the corner radius is rounded_corner_radius in its
+# framework overlay.
+width = 1264
+height = 2780
+density = 560
+diagonal = 6.78
+corner_radius = 115
+
+# The touchscreen: Synaptics TouchComm behind OnePlus's touch layer
+# (oplus_bsp_tp_hbp_syna_s3910 on oplus_hbp_core), which reports positions
+# in the kernel as any touchscreen does. The stock recovery ramdisk's
+# modules.load.recovery already lists it with the display's modules, so
+# nothing is loaded here.
+[modules]
+sources = ["vendor_boot", "vendor_dlkm", "vendor", "system_dlkm"]
+
+# The phone's recovery.fstab mounts persist at /mnt/vendor/persist, which
+# is where the vendor partition's links into it point.
+[partitions]
+mounted = ["persist"]
+
+# What the phone's own init runs once the system has finished starting;
+# for the sun platform the wrapper hands over to
+# init.kernel.post_boot-sun.sh, as kernel-post-boot in
+# /vendor/etc/init/hw/init.qti.kernel.rc. It hands the CPU clusters to
+# WALT, lets idle CPUs power down and sets how the memory bus scales;
+# without it the CPUs stay at their highest clock and voltage even while
+# idle, and the phone slowly heats up.
+[[service]]
+path = "/vendor/bin/sh"
+args = ["/vendor/bin/init.kernel.post_boot.sh"]
+libraries = ["/system/lib64", "/vendor/lib64"]
+oneshot = true
+user = "root"
+groups = ["root", "system", "wakelock", "graphics"]
+
+# WLAN: the peach node in the device tree, of the second revision, driven
+# by qca_cld3_peach_v2; the stock recovery ramdisk loads neither it nor
+# cnss2, so both are loaded here. Its cfg80211 asks for rfkill, one of the
+# kernel's own modules in system_dlkm. The recovery's own init mounts the
+# modem partition at /firmware in `on fs`, and its ueventd searches
+# /firmware/image and /odm/firmware, where the board files and the
+# settings sit, so no firmware is given again; the address is read from
+# NV. wpa_supplicant runs on the recovery's own libraries before the
+# vendor partition's, as on the 17 Ultra.
+[wlan]
+modules = ["rfkill", "qca_cld3_peach_v2"]
+writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
+interface = "wlan0"
+supplicant = "/vendor/bin/hw/wpa_supplicant"
+libraries = ["/system/lib64", "/vendor/lib64"]
+service = "android.hardware.wifi.supplicant.ISupplicant/default"
+# crDroid's own captive portal page.
+probe = "http://connectivitycheck.gstatic.com/generate_204"
+
+# The modem's partitions and persist, and the folders of /data the system
+# keeps in step with the TEE, which a backup would only restore stale.
+[backup]
+efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
+data_skipped = ["vendor/tzstorage", "vendor/qtee", "vendor/fingerprint", "vendor/fingerprint_ori"]
+
+# The logs and dumps OnePlus's system keeps under /data/vendor; radio is
+# left out, as it holds the modem's databases rather than logs.
+[wipe]
+logs = [
+    "/data/vendor/olog",
+    "/data/vendor/oplus/log",
+    "/data/vendor/mmdump",
+    "/data/vendor/nicmd",
+    "/data/vendor/qms_logs",
+    "/data/vendor/ramdump",
+    "/data/vendor/ssrdump",
+    "/data/vendor/tombstones",
+]
+
+# The stock build the recovery is made on: crDroid 17.0's v13.1 of
+# 2026-11-13, whose full update package on SourceForge holds the recovery
+# partition the recovery is built on top of. The version is the one the
+# package's name carries; the package names the build's date beside it. The
+# sum is of that partition as both of this phone's recovery slots hold it.
+[stock]
+version = "v13.1"
+package = "https://sourceforge.net/projects/crdroid/files/hummer/13.x/crDroidAndroid-17.0-20261113-hummer-v13.1.zip"
+recovery = "5f31b82c09ea728d434f2a0598d1956df01e5b72096b8b6a3eb54a59ae64df5e"
