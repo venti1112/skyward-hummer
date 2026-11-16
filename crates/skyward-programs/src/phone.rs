@@ -363,17 +363,19 @@ impl Phone {
     /// Read the descriptions of the partitions that describe the phone's
     /// own services: each one's main description, which is the one named
     /// after the build of the hardware where the phone says which build it
-    /// is, and every description in its folder of them, each read from the
-    /// file init puts in its place where it puts one there.
+    /// is and keeps one, and `manifest.xml` on a phone that keeps one
+    /// instead; and every description in its folder of them, each read from
+    /// the file init puts in its place where it puts one there.
     fn read_descriptions(&mut self) -> Result<()> {
         let put = self.put_in_place();
         for (name, build) in DESCRIBING {
             let Some(partition) = self.partitions.iter().find(|p| p.name == name) else { continue };
             let folder = partition.at.join(DESCRIPTIONS);
             let mut files = Vec::new();
-            let main = match self.properties.get(build) {
-                Some(build) if !build.is_empty() => format!("manifest_{build}.xml"),
-                _ => "manifest.xml".to_string(),
+            let named = self.properties.get(build).filter(|build| !build.is_empty()).map(|build| format!("manifest_{build}.xml"));
+            let main = match named.filter(|file| folder.join(file).is_file()) {
+                Some(file) => file,
+                None => "manifest.xml".to_string(),
             };
             if folder.join(&main).is_file() {
                 files.push(main);
@@ -449,5 +451,29 @@ mod tests {
         assert_eq!(phone.holds(&triggers(&["init", "property:vendor.ese.strongbox=NXP"])), Happens::Maybe, "one a program may set while it runs");
         assert_eq!(phone.holds(&triggers(&["property:sys.boot_completed=1", "property:ro.boot.hwc=CN"])), Happens::No);
         assert_eq!(phone.holds(&triggers(&["charger"])), Happens::No, "nothing that happens as every phone starts");
+    }
+
+    #[test]
+    fn a_phone_reads_the_standard_main_description_where_it_keeps_no_build_s_own() {
+        let at = tempfile::tempdir().unwrap();
+        let vintf = at.path().join("etc/vintf");
+        std::fs::create_dir_all(&vintf).unwrap();
+        let told = |package: &str, interface: &str| {
+            format!(r#"<manifest version="1.0" type="device"><hal format="aidl"><name>{package}</name><fqname>{interface}/default</fqname></hal></manifest>"#)
+        };
+        std::fs::write(vintf.join("manifest.xml"), told("android.hardware.gatekeeper", "IGatekeeper")).unwrap();
+        let read = |sku: &str| {
+            let partitions = vec![Partition { name: "vendor".into(), mounted: "/vendor".into(), at: at.path().to_path_buf() }];
+            let properties = [("ro.boot.product.vendor.sku", sku)].into_iter().map(|(name, value)| (name.to_string(), value.to_string())).collect();
+            Phone::read(partitions, properties, None).unwrap()
+        };
+        assert_eq!(
+            read("sun").told_of(),
+            ["android.hardware.gatekeeper.IGatekeeper/default"],
+            "a build the partition keeps no description of its own for reads the standard one"
+        );
+        std::fs::write(vintf.join("manifest_sun.xml"), told("android.hardware.boot", "IBootControl")).unwrap();
+        assert_eq!(read("sun").told_of(), ["android.hardware.boot.IBootControl/default"], "the description the partition keeps for the build");
+        assert_eq!(read("kera").told_of(), ["android.hardware.gatekeeper.IGatekeeper/default"], "another build reads the standard one");
     }
 }
