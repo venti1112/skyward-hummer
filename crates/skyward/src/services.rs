@@ -21,8 +21,9 @@ use std::time::{Duration, Instant};
 /// before it is started again.
 const RESTART_DELAY: Duration = Duration::from_secs(1);
 
-/// How long a program gets to become what it says it will be.
-const READY_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long a service a program an earlier run left may stay in the
+/// directory after it is ended.
+const GONE_TIMEOUT: Duration = Duration::from_secs(20);
 const READY_POLL: Duration = Duration::from_millis(100);
 
 /// Where the kernel says the highest capability it knows.
@@ -81,7 +82,7 @@ pub fn start(programs: &[Started], libraries: Option<&Path>) -> Result<()> {
         let waiting = s.clone();
         let name = Path::new(&s.path).file_name().map_or_else(|| s.path.clone(), |n| n.to_string_lossy().into_owned());
         thread::Builder::new().name(name).spawn(move || supervise(&s, &who, &given)).context("start a supervising thread")?;
-        ready(&waiting)?;
+        ready(&waiting, program.ready_time)?;
     }
     Ok(())
 }
@@ -220,9 +221,9 @@ fn end_left(s: &Service) -> Result<()> {
         }
     }
     wait_for(pid)?;
-    let until = Instant::now() + READY_TIMEOUT;
+    let until = Instant::now() + GONE_TIMEOUT;
     while s.ready_service.as_deref().is_some_and(registered) {
-        ensure!(Instant::now() < until, "{}, pid {pid}, is ended and still registered {} seconds on", s.path, READY_TIMEOUT.as_secs());
+        ensure!(Instant::now() < until, "{}, pid {pid}, is ended and still registered {} seconds on", s.path, GONE_TIMEOUT.as_secs());
         thread::sleep(READY_POLL);
     }
     skyward_sys::kmsg(&format!("{}: pid {pid}, left by an earlier recovery service, ended to be started anew", s.path))
@@ -320,15 +321,16 @@ fn set_capabilities(mask: u64) -> io::Result<()> {
     }
 }
 
-/// Wait until the program has what it says it will be ready with.
-fn ready(s: &Service) -> Result<()> {
+/// Wait until the program has what it says it will be ready with, for as
+/// long as it may take.
+fn ready(s: &Service, time: Duration) -> Result<()> {
     let waited_on = match (&s.ready_property, &s.ready_service, &s.ready_hardware_service) {
         (Some(p), _, _) => format!("set no {p}"),
         (_, Some(n), _) => format!("registered no {n}"),
         (_, _, Some(n)) => format!("registered no {n}"),
         _ => return Ok(()),
     };
-    let until = Instant::now() + READY_TIMEOUT;
+    let until = Instant::now() + time;
     loop {
         if let Some(name) = &s.ready_property
             && skyward_sys::prop(name).is_some_and(|v| !v.is_empty())
@@ -348,7 +350,7 @@ fn ready(s: &Service) -> Result<()> {
             return Ok(());
         }
         if Instant::now() >= until {
-            bail!("{} {waited_on} in {} seconds", s.path, READY_TIMEOUT.as_secs());
+            bail!("{} {waited_on} in {} seconds", s.path, time.as_secs());
         }
         thread::sleep(READY_POLL);
     }

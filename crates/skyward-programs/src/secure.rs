@@ -9,6 +9,7 @@ use crate::script::{Program, Socket};
 use anyhow::{bail, ensure, Context, Result};
 use skyward_config::Service;
 use std::path::Path;
+use std::time::Duration;
 
 /// The key service, and the packages whose services it serves besides: it
 /// is one program behind them all.
@@ -37,6 +38,15 @@ const ELEMENT_SERVICE: &str = skyward_omapi::SERVICE;
 
 /// Which of a service the recovery asks: the one every phone has.
 const INSTANCE: &str = "default";
+
+/// How long a program may take to become what it says it will be: most
+/// have registered by the time the recovery looks.
+pub const READY_TIME: Duration = Duration::from_secs(20);
+
+/// How long the secure element's own service may take: its program waits
+/// for the secure world to have its apps ready, which after a cold boot
+/// comes later than anything else the recovery starts needs.
+pub const ELEMENT_READY_TIME: Duration = Duration::from_secs(60);
 
 /// What a weaver reaches its secure element through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,12 +127,14 @@ pub struct Started {
     /// when the recovery's own program ends: one an earlier run of the
     /// recovery left running is ended and started anew.
     pub anew: bool,
+    /// How long it may take to become what it says it will be.
+    pub ready_time: Duration,
 }
 
 impl From<Service> for Started {
     /// A program init gives nothing besides what `service` says.
     fn from(service: Service) -> Started {
-        Started { service, sockets: Vec::new(), environment: Vec::new(), anew: false }
+        Started { service, sockets: Vec::new(), environment: Vec::new(), anew: false, ready_time: READY_TIME }
     }
 }
 
@@ -291,7 +303,9 @@ fn element(phone: &Phone, name: &str) -> Result<Started> {
         }
     };
     let registers = besides(phone, program, &own, |_| false);
-    Ok(started(phone, program, Ready::Service(own), registers))
+    let mut started = started(phone, program, Ready::Service(own), registers);
+    started.ready_time = ELEMENT_READY_TIME;
+    Ok(started)
 }
 
 /// The description of the service `name` of `kind`, where the phone
@@ -399,5 +413,5 @@ fn started(phone: &Phone, program: &Program, ready: Ready, registers: Vec<String
         groups: program.groups.clone(),
         capabilities: program.capabilities.clone().unwrap_or_default(),
     };
-    Started { service, sockets: program.sockets.clone(), environment: program.environment.clone(), anew: false }
+    Started { service, sockets: program.sockets.clone(), environment: program.environment.clone(), anew: false, ready_time: READY_TIME }
 }

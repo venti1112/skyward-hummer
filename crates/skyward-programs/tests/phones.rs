@@ -187,12 +187,10 @@ fn every_phone_names_one_program_for_each_service() {
 fn nezha_s_programs_are_found_as_they_were_started_on_the_phone() {
     let steps = secure::steps(&phone("nezha", &[("ro.boot.hardware", "qcom"), ("ro.special_edition", "true")])).unwrap();
     let expected = [
-        Started { service: listeners(), sockets: vec![socket("notify-topology", "drmrpc")], environment: Vec::new(), anew: false },
+        Started { sockets: vec![socket("notify-topology", "drmrpc")], ..Started::from(listeners()) },
         Started {
-            service: Service { capabilities: strings(&["WAKE_ALARM", "BLOCK_SUSPEND"]), ..program("/vendor/bin/hlosminkdaemon", &ON_VENDOR, "system", &["system", "oem_2912", "wakelock"]) },
             sockets: vec![socket("ssgtzd", "oem_2912"), socket("hlos_mink_opener", "system")],
-            environment: Vec::new(),
-            anew: false,
+            ..Started::from(Service { capabilities: strings(&["WAKE_ALARM", "BLOCK_SUSPEND"]), ..program("/vendor/bin/hlosminkdaemon", &ON_VENDOR, "system", &["system", "oem_2912", "wakelock"]) })
         },
         Started::from(Service {
             ready_service: Some(KEYS.into()),
@@ -200,11 +198,14 @@ fn nezha_s_programs_are_found_as_they_were_started_on_the_phone() {
             ..program("/vendor/bin/hw/android.hardware.security.onekeymint-service-qti", &ON_VENDOR, "system", &["system", "drmrpc"])
         }),
         Started::from(Service { ready_service: Some(CREDENTIALS.into()), ..program("/vendor/bin/hw/android.hardware.gatekeeper-rust-service-qti", &ON_VENDOR, "system", &["system"]) }),
-        Started::from(Service {
-            ready_service: Some("android.hardware.secure_element.ISecureElement/eSE2".into()),
-            registers: strings(&["vendor.goodix.hardware.secure_element_aidl.IGdxEse/default"]),
-            ..program("/odm/bin/hw/android.hardware.secure_element-service-goodix", &ON_ODM, "system", &["system"])
-        }),
+        Started {
+            ready_time: secure::ELEMENT_READY_TIME,
+            ..Started::from(Service {
+                ready_service: Some("android.hardware.secure_element.ISecureElement/eSE2".into()),
+                registers: strings(&["vendor.goodix.hardware.secure_element_aidl.IGdxEse/default"]),
+                ..program("/odm/bin/hw/android.hardware.secure_element-service-goodix", &ON_ODM, "system", &["system"])
+            })
+        },
         Started::from(Service {
             ready_service: Some(WEAVER.into()),
             capabilities: strings(&["WAKE_ALARM"]),
@@ -245,7 +246,7 @@ fn nezha_s_other_builds_reach_their_weaver_s_secure_element_through_the_secure_e
             ready_service: Some("android.hardware.secure_element.ISecureElement/eSE1".into()),
             ..program("/vendor/bin/hw/android.hardware.secure_element-service.qti", &ON_VENDOR, "system", &["nfc", "system"])
         };
-        assert_eq!(**element, Started::from(own));
+        assert_eq!(**element, Started { ready_time: secure::ELEMENT_READY_TIME, ..Started::from(own) });
         let thales = Service { ready_service: Some(WEAVER.into()), ..program("/odm/bin/hw/android.hardware.weaver-service.thales", &ON_ODM, "vendor_thales_weaver", &["vendor_thales_weaver", "system", "drmrpc"]) };
         assert_eq!(**weaver, Started { anew: true, ..Started::from(thales) }, "it holds on to the service the recovery serves");
         assert!(found.iter().filter(|started| started.anew).count() == 1);
@@ -263,12 +264,10 @@ fn ishtar_s_programs_are_found_as_they_were_started_on_the_phone_and_its_opener_
     let properties = [("ro.boot.hardware", "qcom"), ("ro.boot.product.vendor.sku", "kalama"), ("ro.boot.product.hardware.sku", "ishtar")];
     let steps = secure::steps(&phone("ishtar", &properties)).unwrap();
     let expected = [
-        Started { service: listeners(), sockets: vec![socket("notify-topology", "drmrpc")], environment: Vec::new(), anew: false },
+        Started { sockets: vec![socket("notify-topology", "drmrpc")], ..Started::from(listeners()) },
         Started {
-            service: program("/vendor/bin/ssgtzd", &ON_VENDOR, "system", &["system", "oem_2912"]),
             sockets: vec![socket("ssgtzd", "oem_2912"), socket("ssgtzd_opener", "system")],
-            environment: Vec::new(),
-            anew: false,
+            ..Started::from(program("/vendor/bin/ssgtzd", &ON_VENDOR, "system", &["system", "oem_2912"]))
         },
         Started::from(Service {
             ready_service: Some(KEYS.into()),
@@ -337,7 +336,7 @@ fn dada_s_weaver_goes_through_the_secure_element_service_to_the_element_s_own_se
         ready_service: Some("android.hardware.secure_element.ISecureElement/eSE1".into()),
         ..program("/vendor/bin/hw/android.hardware.secure_element-service.qti", &ON_VENDOR, "system", &["nfc", "system"])
     };
-    assert_eq!(*at("/vendor/bin/hw/android.hardware.secure_element-service.qti"), &Started::from(element));
+    assert_eq!(*at("/vendor/bin/hw/android.hardware.secure_element-service.qti"), &Started { ready_time: secure::ELEMENT_READY_TIME, ..Started::from(element) });
     assert!(at("/odm/bin/hw/android.hardware.weaver-service.thales").anew);
 }
 
