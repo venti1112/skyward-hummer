@@ -38,9 +38,10 @@ const HOME: &str = "/skyward/run/supplicant";
 /// make its socket.
 const WIFI: u32 = 1010;
 
-/// How long the driver may take to make its interface, the chip's firmware
-/// loading meanwhile.
-const INTERFACE_WAIT: Duration = Duration::from_secs(20);
+/// How long the driver may take to make its interface: the chip's firmware
+/// loading, and on phones whose driver asks the modem for the interface's
+/// address, the wait for a modem a recovery never starts.
+const INTERFACE_WAIT: Duration = Duration::from_secs(30);
 
 /// How long the supplicant may take to open its control socket.
 const SOCKET_WAIT: Duration = Duration::from_secs(10);

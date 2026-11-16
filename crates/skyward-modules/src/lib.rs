@@ -8,20 +8,23 @@ pub mod modprobe;
 /// Where a module source's files are in the recovery: the vendor_boot
 /// ramdisk's modules under /lib/modules, the vendor_dlkm and vendor
 /// partitions where they are mounted, and the kernel's own modules in
-/// system_dlkm, which it also keeps in one folder.
+/// system_dlkm, which some builds keep under flatten and others directly
+/// under lib/modules.
 pub fn source_dir(source: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(match source {
         "vendor_boot" => "/lib/modules",
         "vendor_dlkm" => "/vendor_dlkm/lib/modules",
         "vendor" => "/vendor/lib/modules",
-        "system_dlkm" => "/system_dlkm/flatten/lib/modules",
+        "system_dlkm" if Path::new("/system_dlkm/flatten/lib/modules").is_dir() => "/system_dlkm/flatten/lib/modules",
+        "system_dlkm" => "/system_dlkm/lib/modules",
         _ => bail!("unknown module source {source:?}"),
     }))
 }
 
 /// Load `names` (module names without `.ko`) with their dependencies. Each
-/// comes from the first of `dirs` that holds it, and its dependencies from
-/// that directory's modules.dep; a module the kernel already has counts as
+/// comes from the first of `dirs` that holds it; its dependencies come from
+/// that directory's modules.dep, and, where that names another source's
+/// files, from that source too. A module the kernel already has counts as
 /// loaded. Returns the files loaded, dependencies first.
 pub fn load(dirs: &[PathBuf], names: &[String]) -> Result<Vec<PathBuf>> {
     let mut loaded = Vec::new();
@@ -33,9 +36,10 @@ pub fn load(dirs: &[PathBuf], names: &[String]) -> Result<Vec<PathBuf>> {
             .ok_or_else(|| anyhow!("{file} is in none of {dirs:?}"))?;
         let graph = parse_dep(dir)?;
         for m in graph.load_order(std::slice::from_ref(&file)) {
-            let path = graph
-                .resolve_path(&m)
-                .ok_or_else(|| anyhow!("{m} is listed in {}/modules.dep but missing", dir.display()))?;
+            // modules.dep names files of other sources as well, as
+            // system_dlkm's rfkill beside the vendor's own.
+            let path = find(dirs, &m)
+                .ok_or_else(|| anyhow!("{m} is listed in {}/modules.dep but is in none of {dirs:?}", dir.display()))?;
             insmod(&path, "")?;
             loaded.push(path);
         }
@@ -120,6 +124,11 @@ impl ModuleGraph {
     }
 }
 
+/// The file `name` in the first of `dirs` that holds it.
+fn find(dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
+    dirs.iter().find_map(|d| find_file(d, name))
+}
+
 fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
     let rd = fs::read_dir(dir).ok()?;
     for e in rd.flatten() {
@@ -181,5 +190,17 @@ mod tests {
     #[test]
     fn strips_paths_to_basenames() {
         assert_eq!(basename("kernel/drivers/foo/bar.ko"), "bar.ko");
+    }
+
+    #[test]
+    fn a_file_is_found_in_whichever_source_holds_it() {
+        let vendor = tempfile::tempdir().unwrap();
+        let system = tempfile::tempdir().unwrap();
+        std::fs::write(vendor.path().join("cfg80211.ko"), []).unwrap();
+        std::fs::write(system.path().join("rfkill.ko"), []).unwrap();
+        let dirs = [vendor.path().to_path_buf(), system.path().to_path_buf()];
+        assert_eq!(find(&dirs, "rfkill.ko"), Some(system.path().join("rfkill.ko")), "a dependency of the vendor's driver, in system_dlkm");
+        assert_eq!(find(&dirs, "cfg80211.ko"), Some(vendor.path().join("cfg80211.ko")), "the first source holding it");
+        assert_eq!(find(&dirs, "absent.ko"), None);
     }
 }
