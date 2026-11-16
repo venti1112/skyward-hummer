@@ -98,7 +98,8 @@ pub fn serves_elements(steps: &[Step]) -> bool {
 /// and serve the secure element service where it stands among them, which
 /// is after the secure elements' own services have registered and before
 /// the weaver that reaches its secure element through it starts. Each
-/// program names every folder its libraries are looked for in.
+/// program names every folder its libraries are looked for in, and the
+/// recovery adds the installed system's own beside them.
 pub fn start(steps: &[Step]) -> Result<()> {
     for step in steps {
         match step {

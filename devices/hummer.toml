@@ -25,11 +25,31 @@ corner_radius = 115
 # nothing is loaded here.
 [modules]
 sources = ["vendor_boot", "vendor_dlkm", "vendor", "system_dlkm"]
+# The secure element the phone's weaver keeps its secret in sits behind
+# the NXP NFC controller: the secure element's HAL only goes on to load
+# its trusted app once the controller's driver has made /dev/nq-nci, and
+# the recovery ramdisk's own modules do not include that driver. It takes
+# its dependencies, oplus_nfc among them, from vendor_dlkm.
+load = ["nxp-nci"]
 
 # The phone's recovery.fstab mounts persist at /mnt/vendor/persist, which
-# is where the vendor partition's links into it point.
+# is where the vendor partition's links into it point. The recovery's own
+# init mounts the modem partition at /firmware, where the kernel's
+# firmware loader and ueventd find the board files; mounting it as the
+# table says too puts its image folder at /vendor/firmware_mnt/image,
+# where the secure element's HAL loads its trusted app from, as the
+# stock recovery, which mounts the table, has it.
 [partitions]
-mounted = ["persist"]
+mounted = ["persist", "modem"]
+
+# The controller's driver makes its node root's alone; the secure
+# element's HAL runs as system, in the nfc group, and has to open it to
+# power the chip.
+[[owners]]
+user = "nfc"
+group = "nfc"
+mode = 0o660
+paths = ["/dev/nq-nci"]
 
 # What the phone's own init runs once the system has finished starting;
 # for the sun platform the wrapper hands over to
@@ -55,6 +75,8 @@ groups = ["root", "system", "wakelock", "graphics"]
 # settings sit, so no firmware is given again; the address is read from
 # NV. wpa_supplicant runs on the recovery's own libraries before the
 # vendor partition's, as on the 17 Ultra.
+# The modem is also mounted where the table says, for the secure element's
+# trusted app, as above.
 [wlan]
 modules = ["rfkill", "qca_cld3_peach_v2"]
 writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]

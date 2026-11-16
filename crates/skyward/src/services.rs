@@ -46,6 +46,13 @@ const WAITING_CALLERS: libc::c_int = 1 << 30;
 /// from.
 const LIBRARY_PATH: &str = "LD_LIBRARY_PATH";
 
+/// Where the installed system keeps the libraries its own programs were
+/// built against, and the loader's beside them. A recovery's linker
+/// searches its own /system and the vendor partitions, but not these, so
+/// a phone's program started here is given them or it does not find what
+/// it links against, as the weaver's own library once did not.
+const PHONE_LIBRARY_DIRS: [&str; 2] = ["/mnt/system/system/lib64", "/mnt/system/system/lib64/bootstrap"];
+
 /// Keep each program running, one thread per program: start it, and start
 /// it again whenever it exits. They are started in the order they are
 /// given, and one that says what it will be ready with holds up those
@@ -388,9 +395,10 @@ fn run(s: &Service, who: &Credentials, given: &Given) -> Result<String> {
 /// The program as it is started: with what it is given, from the top of the
 /// tree, reading and writing nothing of the recovery's, with the
 /// environment init sets it and each of the sockets in `handed` under the
-/// variable that names it, finding its libraries where it names them, and
-/// as `who`. Where init sets it folders of libraries of its own, they are
-/// searched after those it is given here.
+/// variable that names it, finding its libraries where it names them and
+/// then in the installed system's own folders, and as `who`. Where init
+/// sets it folders of libraries of its own, they are searched after those
+/// it is given here.
 fn command(s: &Service, who: &Credentials, given: &Given, handed: &[(String, OwnedFd)]) -> Command {
     let mut cmd = Command::new(&s.path);
     cmd.args(&s.args).current_dir("/").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
@@ -403,9 +411,13 @@ fn command(s: &Service, who: &Credentials, given: &Given, handed: &[(String, Own
             }
         }
     }
-    if !libraries.is_empty() {
-        cmd.env(LIBRARY_PATH, libraries.join(":"));
+    libraries.extend(PHONE_LIBRARY_DIRS.iter().map(|dir| (*dir).to_string()));
+    if let Ok(inherited) = std::env::var(LIBRARY_PATH)
+        && !inherited.is_empty()
+    {
+        libraries.push(inherited);
     }
+    cmd.env(LIBRARY_PATH, libraries.join(":"));
     for (variable, socket) in handed {
         cmd.env(variable, socket.as_raw_fd().to_string());
     }
