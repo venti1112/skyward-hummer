@@ -42,6 +42,15 @@ sources = ["vendor_boot", "vendor_dlkm", "vendor", "system_dlkm"]
 # its dependencies, oplus_nfc among them, from vendor_dlkm.
 load = ["nxp-nci"]
 
+# The board files on the modem partition, which the kernel's firmware
+# loader and the recovery's ueventd find at /firmware/image: the recovery's
+# own init mounts the partition there as it boots, but starting fastbootd
+# unmounts it, and a recovery entered from fastboot never mounts it again,
+# so the WLAN turned on then would find no firmware. Where /firmware is not
+# mounted, the table's modem is mounted and shown there.
+[firmware]
+partition = "modem"
+
 # The phone's recovery.fstab mounts persist at /mnt/vendor/persist, which
 # is where the vendor partition's links into it point. The recovery's own
 # init mounts the modem partition at /firmware, where the kernel's
