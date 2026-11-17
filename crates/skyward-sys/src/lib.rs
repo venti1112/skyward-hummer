@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+pub mod adsp;
 pub mod bcb;
 pub mod clock;
 pub mod control;

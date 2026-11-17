@@ -709,6 +709,45 @@ fn mount_firmware(partition: &str) -> Result<()> {
     skyward_sys::kmsg(&format!("{partition} is mounted on {}, shown at {}", at.display(), shown.display()))
 }
 
+/// Where the kernel's firmware loader looks before it asks anyone: the
+/// recovery's ramdisk holds no such folder, and the image folder of the
+/// firmware partition shown there serves the ADSP's firmware straight to
+/// the kernel.
+#[cfg(target_os = "android")]
+const FIRMWARE_LOADER: &str = "/lib/firmware";
+
+/// Start the ADSP the fuel gauge answers behind, beside the pages of a
+/// boot into fastboot. Such a boot mounts neither the slot's partitions
+/// nor, with them, the firmware partition the ADSP's firmware is loaded
+/// from: it is mounted here, its image folder shown where the kernel's
+/// firmware loader looks, and the ADSP then started. fastbootd asks the
+/// phone's health HAL for a battery before it opens its port, and the
+/// health HAL spends ten seconds looking for one until the ADSP is up, so
+/// the start goes on beside the pages rather than in front of them; a
+/// failure leaves the port to come up as late as it would without this.
+#[cfg(target_os = "android")]
+fn wake_gauge(cfg: &DeviceConfig) {
+    let partition = cfg.firmware.as_ref().map(|firmware| firmware.partition.clone());
+    std::thread::spawn(move || {
+        let up = || -> Result<()> {
+            if let Some(partition) = &partition {
+                let at = skyward_block::fstab::mount(partition)?;
+                let loader = Path::new(FIRMWARE_LOADER);
+                std::fs::create_dir_all(loader).with_context(|| format!("make {}", loader.display()))?;
+                if !skyward_block::mount::is_mount_point(loader)? {
+                    skyward_block::mount::bind(&at.join("image"), loader)?;
+                }
+            }
+            skyward_sys::adsp::start()
+        };
+        let told = match up() {
+            Ok(()) => "the ADSP the fuel gauge answers behind runs".to_string(),
+            Err(e) => format!("the fuel gauge stays down: {e:#}"),
+        };
+        let _ = skyward_sys::kmsg(&told);
+    });
+}
+
 /// What the phone's own secure services read to tell the secure world which
 /// build is running: the system's version and patch level, and the vendor
 /// partition's patch level. A recovery image carries its own, older build's
@@ -818,6 +857,11 @@ fn recovery() -> Result<()> {
             let mut programs = cfg.services.clone();
             if !matches!(request.work, bcb::Work::Fastboot | bcb::Work::WipeAb { .. } | bcb::Work::UnshareBlocks) {
                 programs.extend(prepare(&cfg, booted_slot()?)?);
+            }
+            // The gauge comes up beside the pages, since fastbootd waits for
+            // the battery it reads before it opens its port.
+            if matches!(request.work, bcb::Work::Fastboot) {
+                wake_gauge(&cfg);
             }
             let root = Path::new("/");
             ui::run(&cfg, &programs, &root.join(ramdisk::FONT), &root.join(ramdisk::MONO), request, Screen::Home, None)

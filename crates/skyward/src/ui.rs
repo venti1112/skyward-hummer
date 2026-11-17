@@ -1319,10 +1319,16 @@ impl<'a> Pages<'a> {
             }
         }
         if fastboot {
-            if let Err(e) = skyward_sys::usb::switch("fastboot", USB_TIMEOUT) {
-                skyward_sys::kmsg(&format!("fastbootd has not taken the port: {e:#}"))?;
-                app.report(&format!("{e:#}"), monotonic_ms());
-            }
+            // fastbootd asks the phone's health HAL for the battery before it
+            // opens the port, and the health HAL spends ten seconds looking
+            // for one until the ADSP behind the gauge is started, which goes
+            // on beside the pages. The port goes through "none" to take adb's
+            // function off, as at a recovery's start, and the fastboot one is
+            // then only asked for: waiting for it would hold the first frame
+            // past the five seconds the wait allows and fail before fastbootd
+            // gets there, while the page follows the port as it comes up.
+            skyward_sys::usb::set("none", USB_TIMEOUT).context("take the port from adb for fastboot")?;
+            skyward_sys::set_prop("sys.usb.config", "fastboot").context("ask init for the fastboot port")?;
             let (running, link) = fastboot_status()?;
             app.set_fastboot(running, link);
         }
