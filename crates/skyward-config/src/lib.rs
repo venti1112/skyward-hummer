@@ -214,6 +214,11 @@ pub struct Haptics {
     /// The file the driver says the motor's resonant frequency in, in
     /// tenths of a hertz whatever its label.
     pub resonance: String,
+    /// The file the driver says the motor's period in, in microseconds,
+    /// for a driver that leaves its resonance at 0 until the phone's own
+    /// system has calibrated the motor, which a recovery never runs.
+    #[serde(default)]
+    pub period: Option<String>,
     pub strength: Strength,
 }
 
@@ -541,6 +546,9 @@ impl DeviceConfig {
         if let Some(haptics) = &cfg.haptics {
             let file = &haptics.resonance;
             ensure!(Path::new(file).is_absolute(), "[haptics] resonance: {file} is not an absolute path");
+            if let Some(file) = &haptics.period {
+                ensure!(Path::new(file).is_absolute(), "[haptics] period: {file} is not an absolute path");
+            }
             let Strength { lightest, strongest } = haptics.strength;
             ensure!(
                 0.0 < lightest && lightest < strongest && strongest <= 1.0,
@@ -651,6 +659,8 @@ mod tests {
         let (strength, resonance) = ("strength = { lightest = 0.25, strongest = 1.0 }", "resonance = \"/sys/class/qcom-haptics/lra_frequency_hz\"");
         assert!(with(&format!("{resonance}\n{strength}")).is_ok(), "a click made");
         assert!(with(&format!("click = 0\n{resonance}\n{strength}")).is_ok(), "a click kept");
+        assert!(with(&format!("{resonance}\nperiod = \"/sys/class/qcom-haptics/t_lra_us\"\n{strength}")).is_ok(), "a period for a driver calibrated late");
+        assert!(with(&format!("{resonance}\nperiod = \"sys/t_lra_us\"\n{strength}")).is_err(), "a period file named from nowhere");
         assert!(with(&format!("click = 0\n{strength}")).is_err(), "no motor's resonance to make the ticks at");
         assert!(with(&format!("resonance = \"sys/f\"\n{strength}")).is_err(), "a file named from nowhere");
         assert!(with(resonance).is_err(), "a click without its strengths");

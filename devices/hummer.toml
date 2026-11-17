@@ -18,6 +18,16 @@ density = 560
 diagonal = 6.78
 corner_radius = 115
 
+# The motor: the linear one OnePlus's qcom-hv-haptics driver swings, whose
+# resonant frequency it says only once the phone's own system has calibrated
+# it, at start-up, which the recovery never runs; until then the file reads
+# 0 and the period the driver was built with, 5882 µs or 170 Hz, says it.
+# Past three quarters the motor rattles, as on the 17 Ultra.
+[haptics]
+resonance = "/sys/class/qcom-haptics/lra_frequency_hz"
+period = "/sys/class/qcom-haptics/t_lra_us"
+strength = { lightest = 0.25, strongest = 0.75 }
+
 # The touchscreen: Synaptics TouchComm behind OnePlus's touch layer
 # (oplus_bsp_tp_hbp_syna_s3910 on oplus_hbp_core), which reports positions
 # in the kernel as any touchscreen does. The stock recovery ramdisk's
