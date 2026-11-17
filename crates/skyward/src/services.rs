@@ -132,7 +132,11 @@ pub fn lend_phone_libraries(libraries: Option<&Path>) -> Result<()> {
 }
 
 /// Link each file of `sources` into the first of `searched` under its
-/// name, unless one of `searched` holds that name already.
+/// name, unless one of `searched` holds that name already, or the file is
+/// a link to a path outside the phone's partitions, as its system's links
+/// into the bundle of its runtime are: those paths are not the phone's in
+/// a recovery, so such a name is left to a source that carries its file
+/// whole, as the loader's bootstrap folder does.
 fn lend(searched: &[&Path], sources: &[&Path]) -> Result<()> {
     let into = searched.first().copied().context("a folder to link into")?;
     for from in sources {
@@ -144,7 +148,11 @@ fn lend(searched: &[&Path], sources: &[&Path]) -> Result<()> {
         for entry in listing {
             let entry = entry.with_context(|| format!("list {}", from.display()))?;
             let name = entry.file_name();
-            if entry.file_type().with_context(|| format!("read what {} is", entry.path().display()))?.is_dir() {
+            let kind = entry.file_type().with_context(|| format!("read what {} is", entry.path().display()))?;
+            if kind.is_dir() {
+                continue;
+            }
+            if kind.is_symlink() && entry.path().read_link().with_context(|| format!("read where {} points", entry.path().display()))?.is_absolute() {
                 continue;
             }
             if searched.iter().any(|folder| folder.join(&name).symlink_metadata().is_ok()) {
@@ -633,5 +641,20 @@ mod tests {
         assert_eq!(fs::read(own.join("libvndksupport.so")).unwrap(), b"the phone's");
         assert!(fs::symlink_metadata(own.join("libbase.so")).is_err(), "a name the vendor's folder carries is left to the vendor");
         assert!(fs::symlink_metadata(own.join("hw")).is_err(), "a folder is not a library");
+    }
+
+    #[test]
+    fn a_library_the_phones_system_points_at_in_its_runtime_bundle_is_taken_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let own = tmp.path().join("system");
+        let phone = tmp.path().join("phone");
+        let loader = phone.join("bootstrap");
+        for dir in [&own, &phone, &loader] {
+            fs::create_dir(dir).unwrap();
+        }
+        std::os::unix::fs::symlink("/apex/com.android.runtime/lib64/bionic/libdl_android.so", phone.join("libdl_android.so")).unwrap();
+        fs::write(loader.join("libdl_android.so"), b"the loader's").unwrap();
+        lend(&[own.as_path()], &[phone.as_path(), loader.as_path()]).unwrap();
+        assert_eq!(fs::read(own.join("libdl_android.so")).unwrap(), b"the loader's", "the bundle's path is not the phone's in a recovery");
     }
 }
