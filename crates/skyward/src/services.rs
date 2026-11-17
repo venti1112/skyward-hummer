@@ -47,11 +47,17 @@ const WAITING_CALLERS: libc::c_int = 1 << 30;
 const LIBRARY_PATH: &str = "LD_LIBRARY_PATH";
 
 /// Where the installed system keeps the libraries its own programs were
-/// built against, and the loader's beside them. A recovery's linker
-/// searches its own /system and the vendor partitions, but not these, so
-/// a phone's program started here is given them or it does not find what
-/// it links against, as the weaver's own library once did not.
-const PHONE_LIBRARY_DIRS: [&str; 2] = ["/mnt/system/system/lib64", "/mnt/system/system/lib64/bootstrap"];
+/// built against: its system partition's, the loader's beside them, and
+/// the system extension's. A recovery's linker searches its own /system
+/// and the vendor partitions, but not these, so a phone's program started
+/// here is given them in its environment, and each library of them is put
+/// where its loader searches anyway for a program that environment no
+/// longer reaches.
+const PHONE_LIBRARY_DIRS: [&str; 3] = ["/mnt/system/system/lib64", "/mnt/system/system/lib64/bootstrap", "/mnt/system_ext/lib64"];
+
+/// The folders the loader of a recovery's program searches, in the order
+/// it searches them: its own first.
+const SEARCHED_DIRS: [&str; 3] = ["/system/lib64", "/odm/lib64", "/vendor/lib64"];
 
 /// Keep each program running, one thread per program: start it, and start
 /// it again whenever it exits. They are started in the order they are
@@ -64,8 +70,11 @@ const PHONE_LIBRARY_DIRS: [&str; 2] = ["/mnt/system/system/lib64", "/mnt/system/
 /// with the sockets and the environment init hands it.
 ///
 /// `libraries` is a directory of shared libraries every one of them may
-/// need, searched after whatever it names itself.
+/// need, searched after whatever it names itself. Before the first of them
+/// starts, the phone's libraries are lent to the loader, as
+/// [`lend_phone_libraries`] does.
 pub fn start(programs: &[Started], libraries: Option<&Path>) -> Result<()> {
+    lend_phone_libraries(libraries)?;
     let known = accounts();
     for program in programs {
         let (s, who, given) = readied(program, libraries, &known)?;
@@ -101,6 +110,51 @@ pub fn start(programs: &[Started], libraries: Option<&Path>) -> Result<()> {
 pub fn once(program: &Started) -> Result<ExitStatus> {
     let (s, who, given) = readied(program, None, &accounts())?;
     to_its_end(&s, &who, &given)
+}
+
+/// Put the phone's libraries where the loader of its own programs looks.
+///
+/// A program started with AT_SECURE set, because it gains the capabilities
+/// its file keeps or crosses into another security domain, has
+/// LD_LIBRARY_PATH taken from its environment by the loader, which then
+/// searches only /system/lib64, /odm/lib64 and /vendor/lib64. A phone's
+/// program, as the weaver, links against libraries only the installed
+/// system carries, and is ended before it starts where they are not
+/// found. Each is linked into the first folder under its name, unless a
+/// folder searched before that one has the name already: so the phone's
+/// own copies stand where nothing else does, and change nothing for a
+/// name the recovery or the vendor partitions carry.
+pub fn lend_phone_libraries(libraries: Option<&Path>) -> Result<()> {
+    let mut sources: Vec<&Path> = PHONE_LIBRARY_DIRS.iter().copied().map(Path::new).collect();
+    sources.extend(libraries);
+    let searched: Vec<&Path> = SEARCHED_DIRS.iter().copied().map(Path::new).collect();
+    lend(&searched, &sources)
+}
+
+/// Link each file of `sources` into the first of `searched` under its
+/// name, unless one of `searched` holds that name already.
+fn lend(searched: &[&Path], sources: &[&Path]) -> Result<()> {
+    let into = searched.first().copied().context("a folder to link into")?;
+    for from in sources {
+        let listing = match fs::read_dir(from) {
+            Ok(listing) => listing,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e).with_context(|| format!("list {}", from.display())),
+        };
+        for entry in listing {
+            let entry = entry.with_context(|| format!("list {}", from.display()))?;
+            let name = entry.file_name();
+            if entry.file_type().with_context(|| format!("read what {} is", entry.path().display()))?.is_dir() {
+                continue;
+            }
+            if searched.iter().any(|folder| folder.join(&name).symlink_metadata().is_ok()) {
+                continue;
+            }
+            let to = into.join(&name);
+            std::os::unix::fs::symlink(entry.path(), &to).with_context(|| format!("point {} at {}", to.display(), entry.path().display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// The accounts the phone knows, each by its name.
@@ -554,5 +608,30 @@ fn wait_for(pid: u32) -> Result<()> {
         if e.kind() != io::ErrorKind::Interrupted {
             return Err(e).context("wait on the pidfd");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_phone_library_is_lent_under_its_name_unless_a_folder_searched_earlier_has_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let own = tmp.path().join("system");
+        let vendor = tmp.path().join("vendor");
+        let phone = tmp.path().join("phone");
+        for dir in [&own, &vendor, &phone] {
+            fs::create_dir(dir).unwrap();
+        }
+        fs::write(phone.join("libvndksupport.so"), b"the phone's").unwrap();
+        fs::write(phone.join("libbase.so"), b"the phone's").unwrap();
+        fs::write(vendor.join("libbase.so"), b"the vendor's").unwrap();
+        fs::create_dir(phone.join("hw")).unwrap();
+        let searched: [&Path; 2] = [own.as_path(), vendor.as_path()];
+        lend(&searched, &[phone.as_path()]).unwrap();
+        assert_eq!(fs::read(own.join("libvndksupport.so")).unwrap(), b"the phone's");
+        assert!(fs::symlink_metadata(own.join("libbase.so")).is_err(), "a name the vendor's folder carries is left to the vendor");
+        assert!(fs::symlink_metadata(own.join("hw")).is_err(), "a folder is not a library");
     }
 }
