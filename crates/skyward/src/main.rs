@@ -716,31 +716,42 @@ fn mount_firmware(partition: &str) -> Result<()> {
 #[cfg(target_os = "android")]
 const FIRMWARE_LOADER: &str = "/lib/firmware";
 
-/// Start the ADSP the fuel gauge answers behind, beside the pages of a
-/// boot into fastboot. Such a boot mounts neither the slot's partitions
-/// nor, with them, the firmware partition the ADSP's firmware is loaded
-/// from: it is mounted here, its image folder shown where the kernel's
-/// firmware loader looks, and the ADSP then started. fastbootd asks the
-/// phone's health HAL for a battery before it opens its port, and the
-/// health HAL spends ten seconds looking for one until the ADSP is up, so
-/// the start goes on beside the pages rather than in front of them; a
-/// failure leaves the port to come up as late as it would without this.
+/// Show the firmware partition's images where the kernel's firmware loader
+/// looks, so that the ADSP can be started from them. The partition is
+/// taken from where the recovery's own init mounts it, at every recovery
+/// boot, fastboot's included; the phone's table, which names it, is out
+/// of reach beside a fastboot boot, since it lives on the vendor
+/// partition, which such a boot leaves unmounted. This goes before the
+/// pages start: init takes the partition away once fastbootd runs, which
+/// the pages ask for.
 #[cfg(target_os = "android")]
-fn wake_gauge(cfg: &DeviceConfig) {
-    let partition = cfg.firmware.as_ref().map(|firmware| firmware.partition.clone());
-    std::thread::spawn(move || {
-        let up = || -> Result<()> {
-            if let Some(partition) = &partition {
-                let at = skyward_block::fstab::mount(partition)?;
-                let loader = Path::new(FIRMWARE_LOADER);
-                std::fs::create_dir_all(loader).with_context(|| format!("make {}", loader.display()))?;
-                if !skyward_block::mount::is_mount_point(loader)? {
-                    skyward_block::mount::bind(&at.join("image"), loader)?;
-                }
-            }
-            skyward_sys::adsp::start()
-        };
-        let told = match up() {
+fn show_loader(cfg: &DeviceConfig) -> Result<()> {
+    let loader = Path::new(FIRMWARE_LOADER);
+    if skyward_block::mount::is_mount_point(loader)? {
+        return Ok(());
+    }
+    let shown = Path::new(FIRMWARE_SHOWN);
+    let at = match skyward_block::mount::is_mount_point(shown)? {
+        true => PathBuf::from(shown),
+        false => {
+            let firmware = cfg.firmware.as_ref().context("the device names no firmware partition")?;
+            skyward_block::fstab::mount(&firmware.partition)?
+        }
+    };
+    std::fs::create_dir_all(loader).with_context(|| format!("make {}", loader.display()))?;
+    skyward_block::mount::bind(&at.join("image"), loader)
+}
+
+/// Start the ADSP the fuel gauge answers behind, beside the pages of a
+/// boot into fastboot. fastbootd asks the phone's health HAL for a battery
+/// before it opens its port, and the health HAL spends ten seconds
+/// looking for one until the ADSP is up, so the start goes on beside the
+/// pages rather than in front of them; a failure leaves the port to come
+/// up as late as it would without this.
+#[cfg(target_os = "android")]
+fn wake_gauge() {
+    std::thread::spawn(|| {
+        let told = match skyward_sys::adsp::start() {
             Ok(()) => "the ADSP the fuel gauge answers behind runs".to_string(),
             Err(e) => format!("the fuel gauge stays down: {e:#}"),
         };
@@ -859,9 +870,13 @@ fn recovery() -> Result<()> {
                 programs.extend(prepare(&cfg, booted_slot()?)?);
             }
             // The gauge comes up beside the pages, since fastbootd waits for
-            // the battery it reads before it opens its port.
+            // the battery it reads before it opens its port; the firmware
+            // has to be shown first, while the pages still leave it in place.
             if matches!(request.work, bcb::Work::Fastboot) {
-                wake_gauge(&cfg);
+                match show_loader(&cfg) {
+                    Ok(()) => wake_gauge(),
+                    Err(e) => skyward_sys::kmsg(&format!("the fuel gauge stays down: {e:#}"))?,
+                }
             }
             let root = Path::new("/");
             ui::run(&cfg, &programs, &root.join(ramdisk::FONT), &root.join(ramdisk::MONO), request, Screen::Home, None)
