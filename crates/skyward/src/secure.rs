@@ -39,8 +39,11 @@ const DIRECTORY_PROGRAM: &str = "/system/bin/servicemanager";
 /// property per service, the service's name following this.
 const SERVICE_PIDS: &str = "init.svc_debug_pid.";
 
-/// How long a service init starts again may take to register again.
-const REGISTER_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a service init starts again may take to register again. The
+/// phone's own health HAL spends ten seconds looking for a battery before
+/// it registers at all, and in a recovery entered from fastboot the fuel
+/// gauge does not come up, so it finds none and takes the whole ten.
+const REGISTER_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// How long init may take to see a service it stopped gone.
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
